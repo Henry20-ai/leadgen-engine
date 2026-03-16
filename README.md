@@ -14,7 +14,7 @@ Low reply rates (4-6%) from generic outreach templates
 No systematic way to identify and prioritize high-value prospects
 Limited scalability without hiring more SDRs
 
-# Core issue: Growth was bottlenecked by manual processes that couldn't scale profitably.
+Core issue: Growth was bottlenecked by manual processes that couldn't scale profitably.
 
 # Architecture Design
 A five-stage automated pipeline that operates continuously:
@@ -87,11 +87,11 @@ Removes dependency on advertising platforms with fluctuating costs
 ScaleSprint Marketing is a fictional company created for this case study. However, this system was built with production-grade tools and tested with real business data to validate functionality and performance metrics.
 This solution can be replicated and customized for:
 
-# Marketing and sales agencies seeking client acquisition systems
-# SaaS companies building outbound sales pipelines
-# Ecommerce brands pursuing B2B partnerships
-# Any business requiring scalable, cost-effective lead generation
+Marketing and sales agencies seeking client acquisition systems
+SaaS companies building outbound sales pipelines
+Ecommerce brands pursuing B2B partnerships
+Any business requiring scalable, cost-effective lead generation
 
 The architecture, tools, and workflows are fully operational and deployment-ready. I can adapt this system to your specific industry, target market, and business requirements. Built to demonstrate expertise in AI workflow automation, lead generation systems, and revenue operations—directly aligned with Sales & Marketing automation requirements.
 
-# Interested in implementing a similar system for your business? Let's discuss your requirements.
+Interested in implementing a similar system for your business? Let's discuss your requirements.
