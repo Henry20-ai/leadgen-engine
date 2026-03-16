@@ -1,0 +1,658 @@
+{
+  "name": "ScaleSprint_Full_LeadGen_with_Scraping",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 9 * * 1-5"
+            }
+          ]
+        }
+      },
+      "name": "Daily Trigger - 9am Weekdays",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1,
+      "position": [250, 400],
+      "notes": "Runs every weekday at 9am to find new leads"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.apify.com/v2/acts/compass~crawler-google-places/run-sync-get-dataset-items",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.APIFY_API_KEY }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "searchStringsArray",
+              "value": "=[\"SaaS companies San Francisco\", \"ecommerce stores Los Angeles\", \"software companies Austin TX\", \"SaaS startups New York\"]"
+            },
+            {
+              "name": "maxCrawledPlacesPerSearch",
+              "value": 25
+            },
+            {
+              "name": "language",
+              "value": "en"
+            },
+            {
+              "name": "includeWebResults",
+              "value": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "name": "Apify - Google Maps Scraper",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [450, 300],
+      "notes": "Scrapes Google Maps for SaaS/ecommerce businesses"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.apollo.io/v1/mixed_people/search",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Cache-Control",
+              "value": "no-cache"
+            },
+            {
+              "name": "X-Api-Key",
+              "value": "={{ $env.APOLLO_API_KEY }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"page\": 1,\n  \"per_page\": 25,\n  \"organization_num_employees_ranges\": [\"11-50\", \"51-200\"],\n  \"person_titles\": [\"founder\", \"ceo\", \"cmo\", \"head of growth\", \"head of marketing\"],\n  \"organization_industry_tag_ids\": [\"5567cd4773696439b10b0000\"],\n  \"organization_locations\": [\"United States\"],\n  \"prospected_by_current_team\": [\"no\"]\n}",
+        "options": {}
+      },
+      "name": "Apollo.io - Search Companies",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [450, 500],
+      "notes": "Searches Apollo.io for SaaS companies with decision makers"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse and normalize Google Maps data\nconst items = [];\n\nfor (const item of $input.all()) {\n  if (item.json && Array.isArray(item.json)) {\n    for (const place of item.json) {\n      // Extract domain from website URL\n      let domain = '';\n      if (place.website) {\n        try {\n          const url = new URL(place.website);\n          domain = url.hostname.replace('www.', '');\n        } catch (e) {\n          domain = place.website.replace(/^https?:\\/\\//, '').replace(/\\/.*$/, '').replace('www.', '');\n        }\n      }\n      \n      items.push({\n        json: {\n          company_name: place.title || 'Unknown',\n          domain: domain,\n          industry: 'SaaS/Ecommerce',\n          city: place.city || '',\n          state: place.state || '',\n          country: 'United States',\n          address: place.address || '',\n          phone: place.phone || '',\n          rating: place.totalScore || 0,\n          reviews: place.reviewsCount || 0,\n          employees: null,\n          source: 'Google Maps'\n        }\n      });\n    }\n  }\n}\n\nreturn items;"
+      },
+      "name": "Parse Google Maps Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [650, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse and normalize Apollo.io data\nconst items = [];\n\nfor (const item of $input.all()) {\n  if (item.json?.people) {\n    for (const person of item.json.people) {\n      const org = person.organization || {};\n      \n      // Extract domain\n      let domain = org.primary_domain || '';\n      \n      items.push({\n        json: {\n          company_name: org.name || 'Unknown',\n          domain: domain,\n          industry: org.industry || 'SaaS',\n          city: org.city || '',\n          state: org.state || '',\n          country: org.country || 'United States',\n          employees: org.estimated_num_employees || null,\n          revenue: org.estimated_annual_revenue || null,\n          contact_name: person.name || '',\n          contact_title: person.title || '',\n          contact_email: person.email || '',\n          linkedin_url: person.linkedin_url || '',\n          source: 'Apollo.io'\n        }\n      });\n    }\n  }\n}\n\nreturn items;"
+      },
+      "name": "Parse Apollo Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [650, 500]
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineAll"
+      },
+      "name": "Merge Lead Sources",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 2.1,
+      "position": [850, 400],
+      "notes": "Combines leads from Google Maps and Apollo.io"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Remove duplicate leads based on domain\nconst seen = new Set();\nconst items = [];\n\nfor (const item of $input.all()) {\n  const domain = item.json.domain?.toLowerCase();\n  \n  // Skip if no domain or already seen\n  if (!domain || seen.has(domain)) {\n    continue;\n  }\n  \n  seen.add(domain);\n  items.push(item);\n}\n\nreturn items;"
+      },
+      "name": "Remove Duplicates",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1050, 400]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.domain }}",
+              "operation": "isNotEmpty"
+            },
+            {
+              "value1": "={{ $json.company_name }}",
+              "operation": "isNotEmpty"
+            }
+          ]
+        }
+      },
+      "name": "Filter Valid Leads",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1250, 400],
+      "notes": "Only process leads with domain and company name"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.contact_email }}",
+              "operation": "isEmpty"
+            }
+          ]
+        }
+      },
+      "name": "Need Email Finding?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1450, 300]
+    },
+    {
+      "parameters": {
+        "url": "=https://api.hunter.io/v2/domain-search?domain={{ $json.domain }}&api_key={{ $env.HUNTER_API_KEY }}&type=personal&seniority=executive&limit=1",
+        "options": {}
+      },
+      "name": "Hunter.io - Find Email",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1650, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract first email from Hunter.io response\nconst inputData = $input.all()[0].json;\nconst hunterData = $input.all()[1].json;\n\nconst emails = hunterData.data?.emails || [];\nconst firstEmail = emails[0]?.value || null;\nconst confidence = emails[0]?.confidence || 0;\n\nreturn {\n  json: {\n    ...inputData,\n    contact_email: firstEmail,\n    email_confidence: confidence,\n    email_source: 'Hunter.io'\n  }\n};"
+      },
+      "name": "Extract Email",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1850, 200]
+    },
+    {
+      "parameters": {
+        "url": "=https://api.neverbounce.com/v4/single/check?key={{ $env.NEVERBOUNCE_API_KEY }}&email={{ $json.contact_email }}",
+        "options": {}
+      },
+      "name": "Validate Email",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [2050, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.result }}",
+              "operation": "equals",
+              "value2": "valid"
+            }
+          ]
+        }
+      },
+      "name": "Email Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [2250, 300]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=You are a B2B lead qualification AI for ScaleSprint Marketing.\n\nAnalyze this lead:\nCompany: {{ $json.company_name }}\nWebsite: https://{{ $json.domain }}\nIndustry: {{ $json.industry }}\nLocation: {{ $json.city }}, {{ $json.state }}\nEmployees: {{ $json.employees || 'Unknown' }}\nSource: {{ $json.source }}\n\nTasks:\n1. Visit their website and analyze:\n   - Do they run paid ads? (Google Ads, Facebook pixels visible)\n   - Funnel maturity (landing pages, lead magnets, conversion optimization)\n   - Growth signals (hiring, funding announcements, active blog)\n   - Revenue indicators (pricing page, case studies, client logos)\n\n2. Calculate lead score (0-100):\n   - Running paid ads = +30 points\n   - SaaS/Ecommerce revenue estimate >$500k/year = +40 points\n   - Weak funnel optimization opportunities = +20 points\n   - US-based with 10-200 employees = +10 points\n\n3. Identify specific pain points:\n   - What problems can ScaleSprint solve for them?\n   - What's the most compelling insight about their business?\n\n4. Generate personalized outreach angle\n\nReturn ONLY valid JSON:\n{\n  \"score\": 85,\n  \"qualification\": \"High-Intent Lead\",\n  \"pain_point\": \"Running Google Ads but landing page conversion rate is weak\",\n  \"insight\": \"Their checkout flow has 4 steps when industry standard is 2\",\n  \"personalized_opener\": \"I noticed you're driving traffic to your site but your checkout has more friction than competitors...\",\n  \"recommended_service\": \"Funnel Optimization\",\n  \"estimated_budget\": \"$3000-5000/month\"\n}",
+        "options": {
+          "systemMessage": "You are an expert B2B sales analyst. Be specific, data-driven, and identify real opportunities."
+        }
+      },
+      "name": "AI Agent - Qualify Lead",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.6,
+      "position": [2450, 200],
+      "credentials": {
+        "anthropicApi": {
+          "id": "1",
+          "name": "Anthropic account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "={{ $json.score }}",
+              "operation": "largerEqual",
+              "value2": 70
+            }
+          ]
+        }
+      },
+      "name": "Score >= 70?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [2650, 200]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Write a personalized cold email for this lead:\n\nCompany: {{ $json.company_name }}\nRecipient: {{ $json.contact_name || 'Founder/CMO' }}\nTitle: {{ $json.contact_title || 'Leadership' }}\nPain Point: {{ $json.pain_point }}\nInsight: {{ $json.insight }}\nOpener: {{ $json.personalized_opener }}\n\nEmail requirements:\n- Subject: Curiosity-driven, mentions their company\n- Opening: Use the personalized opener (1-2 sentences)\n- Value prop: Brief mention of how ScaleSprint helps {{ $json.industry }} companies\n- Social proof: One-line example (\"We helped [similar company] increase demos 40%\")\n- CTA: Low-pressure 15-min chat offer\n- Signature: Professional\n\nTone: Conversational, helpful, NOT salesy\nLength: 80-120 words maximum\n\nReturn JSON:\n{\n  \"subject\": \"Quick question about {{ $json.company_name }}'s funnel\",\n  \"body\": \"Full email body here...\"\n}",
+        "options": {}
+      },
+      "name": "AI Agent - Write Email",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.6,
+      "position": [2850, 150],
+      "credentials": {
+        "anthropicApi": {
+          "id": "1",
+          "name": "Anthropic account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $json.contact_email }}",
+        "subject": "={{ $json.subject }}",
+        "message": "={{ $json.body }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "name": "Gmail - Send Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [3050, 150],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "1",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "operation": "append",
+        "sheetId": "={{ $env.GOOGLE_SHEET_ID }}",
+        "range": "Leads!A:Z",
+        "options": {
+          "dataMode": "defineBelow",
+          "data": {
+            "values": [
+              {
+                "values": [
+                  {
+                    "column": "Company_Name",
+                    "value": "={{ $json.company_name }}"
+                  },
+                  {
+                    "column": "Domain",
+                    "value": "={{ $json.domain }}"
+                  },
+                  {
+                    "column": "Industry",
+                    "value": "={{ $json.industry }}"
+                  },
+                  {
+                    "column": "City",
+                    "value": "={{ $json.city }}"
+                  },
+                  {
+                    "column": "State",
+                    "value": "={{ $json.state }}"
+                  },
+                  {
+                    "column": "Employees",
+                    "value": "={{ $json.employees }}"
+                  },
+                  {
+                    "column": "Email",
+                    "value": "={{ $json.contact_email }}"
+                  },
+                  {
+                    "column": "Email_Confidence",
+                    "value": "={{ $json.email_confidence }}"
+                  },
+                  {
+                    "column": "Lead_Score",
+                    "value": "={{ $json.score }}"
+                  },
+                  {
+                    "column": "Qualification",
+                    "value": "={{ $json.qualification }}"
+                  },
+                  {
+                    "column": "Pain_Point",
+                    "value": "={{ $json.pain_point }}"
+                  },
+                  {
+                    "column": "Insight",
+                    "value": "={{ $json.insight }}"
+                  },
+                  {
+                    "column": "Status",
+                    "value": "Contacted"
+                  },
+                  {
+                    "column": "Last_Contact",
+                    "value": "={{ $now.toISO() }}"
+                  },
+                  {
+                    "column": "Next_Action",
+                    "value": "Follow-up in 4 days"
+                  },
+                  {
+                    "column": "Email_Sent",
+                    "value": "TRUE"
+                  },
+                  {
+                    "column": "Source",
+                    "value": "={{ $json.source }}"
+                  },
+                  {
+                    "column": "Created_Date",
+                    "value": "={{ $now.toFormat('yyyy-MM-dd') }}"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "name": "Save to Google Sheets CRM",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 3,
+      "position": [3250, 150],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "1",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "operation": "append",
+        "sheetId": "={{ $env.GOOGLE_SHEET_ID }}",
+        "range": "Leads!A:Z",
+        "options": {
+          "dataMode": "defineBelow",
+          "data": {
+            "values": [
+              {
+                "values": [
+                  {
+                    "column": "Company_Name",
+                    "value": "={{ $json.company_name }}"
+                  },
+                  {
+                    "column": "Domain",
+                    "value": "={{ $json.domain }}"
+                  },
+                  {
+                    "column": "Lead_Score",
+                    "value": "={{ $json.score }}"
+                  },
+                  {
+                    "column": "Status",
+                    "value": "Low Score - Skipped"
+                  },
+                  {
+                    "column": "Source",
+                    "value": "={{ $json.source }}"
+                  },
+                  {
+                    "column": "Created_Date",
+                    "value": "={{ $now.toFormat('yyyy-MM-dd') }}"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "name": "Save Low Score Leads",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 3,
+      "position": [2850, 300]
+    }
+  ],
+  "connections": {
+    "Daily Trigger - 9am Weekdays": {
+      "main": [
+        [
+          {
+            "node": "Apify - Google Maps Scraper",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Apollo.io - Search Companies",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apify - Google Maps Scraper": {
+      "main": [
+        [
+          {
+            "node": "Parse Google Maps Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apollo.io - Search Companies": {
+      "main": [
+        [
+          {
+            "node": "Parse Apollo Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Google Maps Data": {
+      "main": [
+        [
+          {
+            "node": "Merge Lead Sources",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Apollo Data": {
+      "main": [
+        [
+          {
+            "node": "Merge Lead Sources",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge Lead Sources": {
+      "main": [
+        [
+          {
+            "node": "Remove Duplicates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Remove Duplicates": {
+      "main": [
+        [
+          {
+            "node": "Filter Valid Leads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter Valid Leads": {
+      "main": [
+        [
+          {
+            "node": "Need Email Finding?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Need Email Finding?": {
+      "main": [
+        [
+          {
+            "node": "Hunter.io - Find Email",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Validate Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Hunter.io - Find Email": {
+      "main": [
+        [
+          {
+            "node": "Extract Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Email": {
+      "main": [
+        [
+          {
+            "node": "Validate Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Email": {
+      "main": [
+        [
+          {
+            "node": "Email Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Email Valid?": {
+      "main": [
+        [
+          {
+            "node": "AI Agent - Qualify Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent - Qualify Lead": {
+      "main": [
+        [
+          {
+            "node": "Score >= 70?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Score >= 70?": {
+      "main": [
+        [
+          {
+            "node": "AI Agent - Write Email",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Save Low Score Leads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent - Write Email": {
+      "main": [
+        [
+          {
+            "node": "Gmail - Send Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gmail - Send Email": {
+      "main": [
+        [
+          {
+            "node": "Save to Google Sheets CRM",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 1,
+  "updatedAt": "2026-03-15T20:00:00.000Z",
+  "versionId": "2"
+}
